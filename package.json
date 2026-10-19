@@ -1,0 +1,35 @@
+{
+  "name": "@shio265/moondrop-hid",
+  "version": "0.1.0",
+  "description": "Browser WebHID SDK for Moondrop DAC and DSP EQ configuration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "license": "UNLICENSED",
+  "engines": { "bun": ">=1.4.3" },
+  "packageManager": "bun@1.4.3",
+  "publishConfig": { "registry": "https://npm.pkg.github.com" },
+  "repository": { "type": "git", "url": "https://github.com/shio265/MoondropHID.git" },
+  "keywords": ["moondrop", "webhid", "dac", "peq", "usb"],
+  "scripts": {
+    "build": "bunup",
+    "dev": "bunup --watch",
+    "test": "bun test tests/ --timeout 30000",
+    "test:types": "bun run --bun tsc --project tests/types/tsconfig.json",
+    "check": "bun run build && bun run test && bun run test:types",
+    "configure": "bun scripts/configure.js",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun scripts/publish-check.js"
+  },
+  "devDependencies": { "bunup": "0.16.32", "typescript": "7.0.2" }
+}
