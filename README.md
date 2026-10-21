@@ -1,35 +1,35 @@
 # Moondrop HID
 
-Thư viện JavaScript/TypeScript để kết nối, đọc và ghi cấu hình DAC Moondrop qua WebHID.
-Chạy trên trình duyệt hỗ trợ WebHID.
+A JavaScript/TypeScript library for connecting to, reading, and writing Moondrop DAC configurations via WebHID.
+Runs in browsers that support WebHID.
 
-## Cài đặt
+## Installation
 
-Thêm vào `.npmrc` của ứng dụng:
+Add the following to your application's `.npmrc`:
 
 ```ini
 @shio265:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-Đặt GitHub PAT **classic** có quyền `read:packages` vào biến môi trường
-`GITHUB_PACKAGES_TOKEN`, rồi cài gói:
+Set a GitHub **classic** PAT with the `read:packages` permission in the
+`GITHUB_PACKAGES_TOKEN` environment variable, then install the package:
 
 ```sh
 bun add @shio265/moondrop-hid
 ```
 
-## Ví dụ sử dụng
+## Usage example
 
 HTML:
 
 ```html
-<button id="connect">Kết nối và đọc cấu hình</button>
-<button id="save">Ghi EQ</button>
-<button id="disconnect">Ngắt kết nối</button>
+<button id="connect">Connect and read configuration</button>
+<button id="save">Write EQ</button>
+<button id="disconnect">Disconnect</button>
 ```
 
-JavaScript, chạy sau khi các nút đã có trong trang:
+JavaScript, run after the buttons have been added to the page:
 
 ```js
 import { createClient } from '@shio265/moondrop-hid';
@@ -39,9 +39,9 @@ const dac = createClient();
 document.querySelector('#connect').onclick = async () => {
   try {
     const device = await dac.connect();
-    if (!device) return; // Người dùng hủy chọn thiết bị
+    if (!device) return; // The user canceled device selection
 
-    console.log('Thiết bị:', device.model);
+    console.log('Device:', device.model);
     if (device.capabilities.supportsRead) {
       console.log(await dac.readConfig());
     }
@@ -66,16 +66,15 @@ document.querySelector('#disconnect').onclick = () =>
   dac.disconnect().catch(console.error);
 ```
 
-## Lưu ý
+## Notes
 
-- Gọi `connect()` từ thao tác bấm của người dùng. Kết nối không tự ghi cấu hình.
-- Ví dụ ghi một band EQ tại 1000 Hz, giảm 3 dB. **Các band còn lại được đặt về phẳng**, thay thế toàn bộ custom bank.
-- Không phải thiết bị nào cũng hỗ trợ đọc cấu hình. Kiểm tra `dac.device.limits` để biết giới hạn band.
-- Giảm âm lượng trước khi thử. Gửi lệnh ghi thành công chưa đảm bảo dữ liệu đã lưu đúng; nên đọc lại nếu thiết bị hỗ trợ.
+- The example writes one EQ band at 1000 Hz with a 3 dB reduction. All other bands are reset to their defaults.
+- Some devices do not support reading configuration. Check `dac.device.limits` for the supported limits.
+- Reduce the volume before testing. A successful write command does not guarantee that the data was saved correctly; read it back if the device supports it.
 
-## Phát triển và phát hành
+## Development and release
 
-Cần Bun 1.4.3 trở lên. Thư viện được build bằng [Bunup](https://bunup.dev/):
+Bun 1.4.3 or later is required. The library is built with [Bunup](https://bunup.dev/):
 
 ```sh
 bun install --frozen-lockfile
