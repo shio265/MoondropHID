@@ -1,7 +1,7 @@
 // WalkPlay: DAWN PRO 2, MOONDROP HiFi with PD, MD-QT-042.
 import { requestReport } from '../hid/transport.js';
 import { logHidTx, logHidRx } from '../utils/logger.js';
-import { delay } from '../utils/timing.js';
+import { markWrite, operationDelay, operationFor, reportProgress } from '../hid/operations.js';
 import { convertToByteArray } from '../utils/bytes.js';
 import { compensateFreqForWrite, decompensateFreqFromRead,
   compensateQForWrite, decompensateQFromRead } from '../utils/compensation.js';
@@ -34,6 +34,7 @@ export const walkplayProtocol = (function () {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
     if (typeof slot === 'string') slot = parseInt(slot, 10);
+    markWrite(deviceDetails);
     for (let i = 0; i < filtersToWrite.length; i++) {
       const filter = filtersToWrite[i] || {};
       const filterToWrite = normalizeFilterForWrite(filter, deviceDetails.modelConfig);
@@ -51,21 +52,24 @@ export const walkplayProtocol = (function () {
         END
       ];
       await sendReport(device, REPORT_ID, packet);
-      await delay(20);
+      reportProgress(deviceDetails, 'write', i + 1, deviceDetails.modelConfig.maxFilters);
+      await operationDelay(device, 20);
     }
-    await delay(100);
+    reportProgress(deviceDetails, 'commit', 0, 1);
+    await operationDelay(device, 100);
     if (deviceDetails.modelConfig.deviceHandlesPregain === false) {
       await writeGlobalGain(device, globalGain);
-      await delay(50);
+      await operationDelay(device, 50);
     }
     // Order matters: this sequence persists the EQ while leaving it enabled.
     await sendReport(device, REPORT_ID, [WRITE, 0x05, END]);
-    await delay(20);
+    await operationDelay(device, 20);
     await sendReport(device, REPORT_ID, [WRITE, 0x17, END]);
-    await delay(20);
+    await operationDelay(device, 20);
     await sendReport(device, REPORT_ID, [WRITE, CMD.TEMP_WRITE, 0x04, 0x00, 0x00, 0xFF, 0xFF, END]);
-    await delay(50);
+    await operationDelay(device, 50);
     await sendReport(device, REPORT_ID, [WRITE, CMD.FLASH_EQ, 0x01, END]);
+    reportProgress(deviceDetails, 'commit', 1, 1);
   };
 
   const setMicGain = async (deviceDetails, value) => {
@@ -85,24 +89,11 @@ export const walkplayProtocol = (function () {
   const readMicGain = async (deviceDetails) => {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        device.removeEventListener('inputreport', onReport);
-        reject('Timeout reading mic gain');
-      }, 1000);
-      const onReport = (event) => {
-        const data = new Uint8Array(event.data.buffer);
-        logHidRx('Walkplay', data);
-        if (data[0] !== READ || data[1] !== CMD.MIC_GAIN) return;
-        clearTimeout(timeout);
-        device.removeEventListener('inputreport', onReport);
-        const raw = data[2] | (data[3] << 8);
-        const signed = raw > 32767 ? raw - 65536 : raw;
-        resolve(Math.round((signed * 15 / 32767) * 100) / 100);
-      };
-      device.addEventListener('inputreport', onReport);
-      sendReport(device, REPORT_ID, [READ, CMD.MIC_GAIN, 0x00]).catch(reject);
-    });
+    const data = await requestReport(device, REPORT_ID, new Uint8Array([READ, CMD.MIC_GAIN, 0x00]),
+      data => data.length >= 4 && data[0] === READ && data[1] === CMD.MIC_GAIN, 'Walkplay');
+    const raw = data[2] | (data[3] << 8);
+    const signed = raw > 32767 ? raw - 65536 : raw;
+    return Math.round((signed * 15 / 32767) * 100) / 100;
   };
 
   function convertFromFilterType(filterType) {
@@ -132,21 +123,24 @@ export const walkplayProtocol = (function () {
     if (!device) throw new Error('Device not connected.');
     const filters = [];
     const onFilterReport = (event) => {
-      const data = new Uint8Array(event.data.buffer);
+      const data = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
       logHidRx('Walkplay', data);
       if (data[1] !== CMD.PEQ_VALUES) return;
       if (data.length >= 34) {
         const filter = parseFilterPacket(data, deviceDetails.modelConfig);
+        if (filter.filterIndex >= deviceDetails.modelConfig.maxFilters) return;
+        const fresh = filters[filter.filterIndex] === undefined;
         filters[filter.filterIndex] = filter;
+        if (fresh) reportProgress(deviceDetails, 'read', filters.filter(Boolean).length, deviceDetails.modelConfig.maxFilters);
       }
     };
     device.addEventListener('inputreport', onFilterReport);
     try {
       for (let i = 0; i < deviceDetails.modelConfig.maxFilters; i++) {
         await sendReport(device, REPORT_ID, [READ, CMD.PEQ_VALUES, 0x00, 0x00, i, END]);
-        await delay(50);
+        await operationDelay(device, 50);
       }
-      await delay(100);
+      await operationDelay(device, 100);
       const result = await waitForFilters(
         () => filters.filter(f => f !== undefined).length === deviceDetails.modelConfig.maxFilters,
         device, 10000,
@@ -155,6 +149,7 @@ export const walkplayProtocol = (function () {
       try {
         result.globalGain = await readGlobalGain(device);
       } catch (error) {
+        operationFor(device)?.throwIfAborted();
         Object.defineProperty(result, 'globalGainError', { value: error });
         console.warn(`USB Device PEQ: Walkplay failed to read global gain: ${error}`);
       }
@@ -247,44 +242,16 @@ export const walkplayProtocol = (function () {
   const readDenoiseEnabled = async (deviceDetails) => {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        device.removeEventListener('inputreport', onReport);
-        reject('Timeout reading denoise state');
-      }, 2000);
-      const onReport = (event) => {
-        const data = new Uint8Array(event.data.buffer);
-        logHidRx('Walkplay', data);
-        if (data[0] !== READ || data[1] !== CMD.DENOISE) return;
-        clearTimeout(timeout);
-        device.removeEventListener('inputreport', onReport);
-        resolve(data[3] === 0x01);
-      };
-      device.addEventListener('inputreport', onReport);
-      sendReport(device, REPORT_ID, [READ, CMD.DENOISE, 0x00]).catch(reject);
-    });
+    const data = await readSettingPacket(device, CMD.DENOISE);
+    return data[3] === 0x01;
   };
 
   const readDacFilter = async (deviceDetails) => {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
     const names = { 1: 'FAST-LL', 2: 'FAST-PC', 3: 'SLOW-LL', 4: 'SLOW-PC', 5: 'NON-OS' };
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        device.removeEventListener('inputreport', onReport);
-        reject('Timeout reading DAC filter');
-      }, 2000);
-      const onReport = (event) => {
-        const data = new Uint8Array(event.data.buffer);
-        logHidRx('Walkplay', data);
-        if (data[0] !== READ || data[1] !== CMD.DAC_FILTER) return;
-        clearTimeout(timeout);
-        device.removeEventListener('inputreport', onReport);
-        resolve(names[data[3]] ?? null);
-      };
-      device.addEventListener('inputreport', onReport);
-      sendReport(device, REPORT_ID, [READ, CMD.DAC_FILTER]).catch(reject);
-    });
+    const data = await readSettingPacket(device, CMD.DAC_FILTER, false);
+    return names[data[3]] ?? null;
   };
 
   const setDacWorkMode = async (deviceDetails, mode) => {
@@ -294,22 +261,8 @@ export const walkplayProtocol = (function () {
   const readDacWorkMode = async (deviceDetails) => {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        device.removeEventListener('inputreport', onReport);
-        reject('Timeout reading DAC work mode');
-      }, 2000);
-      const onReport = (event) => {
-        const data = new Uint8Array(event.data.buffer);
-        logHidRx('Walkplay', data);
-        if (data[0] !== READ || data[1] !== CMD.DAC_WORK_MODE) return;
-        clearTimeout(timeout);
-        device.removeEventListener('inputreport', onReport);
-        resolve(data[3]);
-      };
-      device.addEventListener('inputreport', onReport);
-      sendReport(device, REPORT_ID, [READ, CMD.DAC_WORK_MODE]).catch(reject);
-    });
+    const data = await readSettingPacket(device, CMD.DAC_WORK_MODE, false);
+    return data[3];
   };
 
   const setOutputGain = async (deviceDetails, gainDb) => {
@@ -325,23 +278,16 @@ export const walkplayProtocol = (function () {
   const readGainMode = async (deviceDetails) => {
     const device = deviceDetails.rawDevice;
     if (!device) throw new Error('Device not connected.');
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        device.removeEventListener('inputreport', onReport);
-        reject('Timeout reading gain mode');
-      }, 2000);
-      const onReport = (event) => {
-        const data = new Uint8Array(event.data.buffer);
-        logHidRx('Walkplay', data);
-        if (data[0] !== READ || data[1] !== CMD.GAIN_MODE) return;
-        clearTimeout(timeout);
-        device.removeEventListener('inputreport', onReport);
-        resolve(data[3] === 0x01);
-      };
-      device.addEventListener('inputreport', onReport);
-      sendReport(device, REPORT_ID, [READ, CMD.GAIN_MODE, 0x00]).catch(reject);
-    });
+    const data = await readSettingPacket(device, CMD.GAIN_MODE);
+    return data[3] === 0x01;
   };
+
+  function readSettingPacket(device, command, withEnd = true) {
+    // Keep the two-byte DAC filter/work-mode requests distinct from the other settings.
+    const packet = new Uint8Array(withEnd ? [READ, command, 0x00] : [READ, command]);
+    return requestReport(device, REPORT_ID, packet,
+      data => data.length >= 4 && data[0] === READ && data[1] === command, 'Walkplay', 2000);
+  }
 
   return {
     pushToDevice, pullFromDevice, getCurrentSlot, enablePEQ, setMicGain, readMicGain,
@@ -351,10 +297,18 @@ export const walkplayProtocol = (function () {
 })();
 
 async function waitForFilters(condition, device, timeout, callback) {
+  const operation = operationFor(device);
   return new Promise((resolve, reject) => {
+    operation?.throwIfAborted();
     let interval;
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      clearTimeout(timer);
       clearInterval(interval);
+      operation?.signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => { cleanup(); reject(operation.error); };
+    const timer = setTimeout(() => {
+      cleanup();
       const result = callback(device);
       if (!condition()) {
         result.complete = false;
@@ -367,13 +321,13 @@ async function waitForFilters(condition, device, timeout, callback) {
     }, timeout);
     interval = setInterval(() => {
       if (condition()) {
-        clearTimeout(timer);
-        clearInterval(interval);
+        cleanup();
         const result = callback(device);
         result.complete = true;
         resolve(result);
       }
     }, 10);
+    operation?.signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 

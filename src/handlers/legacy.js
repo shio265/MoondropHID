@@ -1,6 +1,7 @@
 // Legacy register protocol: Old Fashioned. Gain is int8, not KT Micro's int16.
 import { requestReport } from '../hid/transport.js';
 import { logHidTx } from '../utils/logger.js';
+import { markWrite, operationDelay, reportProgress } from '../hid/operations.js';
 
 export const legacyProtocol = (function () {
   const REPORT_ID = 75;
@@ -18,8 +19,8 @@ export const legacyProtocol = (function () {
   const DATA_SLOT_Q = 6;
   const DATA_SLOT_FREQUENCY = 8;
 
-  function sleep(ms = DELAY_MS) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  function sleep(device, ms = DELAY_MS) {
+    return operationDelay(device, ms);
   }
 
   function getFilterRegAddr(filterIndex) {
@@ -57,7 +58,7 @@ export const legacyProtocol = (function () {
     const data1 = await readRegister(device, regAddr);
     const freq = data1.getUint16(DATA_SLOT_FREQUENCY, true);
     const gain = Math.max(-12.8, Math.min(12.7, data1.getInt8(DATA_SLOT_GAIN) / SCALE_GAIN));
-    await sleep();
+    await sleep(device);
     const data2 = await readRegister(device, regAddr + 1);
     const q = data2.getInt16(DATA_SLOT_Q, true) / SCALE_Q;
     return { freq, gain, q, type: 'PK' };
@@ -68,7 +69,8 @@ export const legacyProtocol = (function () {
     const filterCount = deviceDetails.modelConfig.maxFilters || 5;
     for (let i = 0; i < filterCount; i++) {
       filters.push(await readSingleFilter(deviceDetails.rawDevice, i));
-      await sleep();
+      reportProgress(deviceDetails, 'read', i + 1, filterCount);
+      await sleep(deviceDetails.rawDevice);
     }
     return { filters, globalGain: 0 };
   }
@@ -81,11 +83,11 @@ export const legacyProtocol = (function () {
       view.setInt8(DATA_SLOT_GAIN, clampedGain);
       view.setUint16(DATA_SLOT_FREQUENCY, freq, true);
     });
-    await sleep();
+    await sleep(device);
     await writeRegister(device, regAddr + 1, view => {
       view.setInt16(DATA_SLOT_Q, Math.round(q * SCALE_Q), true);
     });
-    await sleep();
+    await sleep(device);
   }
 
   async function saveToFlash(device) {
@@ -96,10 +98,14 @@ export const legacyProtocol = (function () {
 
   async function pushToDevice(deviceDetails, phoneObj, slot, globalGain, filters) {
     const filterCount = deviceDetails.modelConfig.maxFilters || 5;
+    markWrite(deviceDetails);
     for (let i = 0; i < filters.length && i < filterCount; i++) {
       await writeSingleFilter(deviceDetails.rawDevice, i, filters[i]);
+      reportProgress(deviceDetails, 'write', i + 1, filterCount);
     }
+    reportProgress(deviceDetails, 'commit', 0, 1);
     await saveToFlash(deviceDetails.rawDevice);
+    reportProgress(deviceDetails, 'commit', 1, 1);
     return false;
   }
 

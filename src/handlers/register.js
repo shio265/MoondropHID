@@ -1,7 +1,7 @@
 // KT Micro register protocol: CDSP and Chu2 DSP.
 import { requestReport } from '../hid/transport.js';
 import { logHidTx } from '../utils/logger.js';
-import { delay } from '../utils/timing.js';
+import { markWrite, operationDelay, reportProgress } from '../hid/operations.js';
 
 export const registerProtocol = (function () {
   const REPORT_ID = 0x4B;
@@ -80,6 +80,7 @@ export const registerProtocol = (function () {
     for (let i = 0; i < deviceDetails.modelConfig.maxFilters; i++) {
       const { gainFreqId, qId } = bandRegistersFor(deviceDetails.modelConfig, i);
       filters.push(await readFullFilter(device, i, deviceDetails.modelConfig.compensate2X, gainFreqId, qId));
+      reportProgress(deviceDetails, 'read', i + 1, deviceDetails.modelConfig.maxFilters);
     }
     return { filters, globalGain: await readPregain(device) };
   }
@@ -115,12 +116,13 @@ export const registerProtocol = (function () {
 
   async function pushClearToDevice(device) {
     await sendCommandWithResponse(device, buildCommand(COMMAND_CLEAR));
-    await delay(200);
+    await operationDelay(device, 200);
   }
 
   async function pushToDevice(deviceDetails, phoneObj, slot, globalGain, filters) {
     const device = deviceDetails.rawDevice;
     const currentSlot = await getCurrentSlot(deviceDetails);
+    markWrite(deviceDetails);
     if (currentSlot === deviceDetails.modelConfig.disabledPresetId) {
       slot = deviceDetails.modelConfig.availableSlots[0].id;
       await enablePEQ(deviceDetails, true, slot);
@@ -138,12 +140,15 @@ export const registerProtocol = (function () {
       await device.sendReport(REPORT_ID, gainFreq);
       logHidTx('KTMicro', REPORT_ID, q);
       await device.sendReport(REPORT_ID, q);
+      reportProgress(deviceDetails, 'write', i + 1, deviceDetails.modelConfig.maxFilters);
     }
+    reportProgress(deviceDetails, 'commit', 0, 1);
     if (deviceDetails.modelConfig.deviceHandlesPregain === false) await writePregain(device, globalGain);
     const commit = buildCommand(COMMAND_COMMIT);
     logHidTx('KTMicro', REPORT_ID, commit);
     await device.sendReport(REPORT_ID, commit);
-    await delay(1000);
+    await operationDelay(device, 1000);
+    reportProgress(deviceDetails, 'commit', 1, 1);
     return !!deviceDetails.modelConfig.disconnectOnSave;
   }
 

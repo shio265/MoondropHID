@@ -1,6 +1,6 @@
 // Conexant protocol: FreeDSP and ECHO-B (write-only).
 import { logHidTx } from '../utils/logger.js';
-import { delay } from '../utils/timing.js';
+import { markWrite, operationDelay, reportProgress } from '../hid/operations.js';
 
 export const conexantProtocol = (function () {
   const REPORT_ID = 0x01;
@@ -30,10 +30,14 @@ export const conexantProtocol = (function () {
 
   async function pushToDevice(deviceDetails, phoneObj, slot, globalGain, filters) {
     const device = deviceDetails.rawDevice;
+    markWrite(deviceDetails);
     for (let i = 0; i < filters.length && i < FIXED_FREQUENCIES.length; i++) {
       await writeFilterToFlash(device, i + 1, filters[i]);
+      reportProgress(deviceDetails, 'write', i + 1, deviceDetails.modelConfig.maxFilters);
     }
+    reportProgress(deviceDetails, 'commit', 0, 1);
     await applyEQMode(device, 0);
+    reportProgress(deviceDetails, 'commit', 1, 1);
     return false;
   }
 
@@ -70,13 +74,13 @@ export const conexantProtocol = (function () {
     ]);
     logHidTx('Conexant', REPORT_ID, configPacket);
     await device.sendReport(REPORT_ID, configPacket);
-    await delay(15);
+    await operationDelay(device, 15);
     for (const info of SAMPLE_RATES) {
       const biquad = computeBiquadForRate(filter.type, filter.freq, filter.gain, filter.q, info.rate);
       const packet = packPacket(PACKET_ID_SAVE, [info.idx, bandNumber, 3, ...biquad]);
       logHidTx('Conexant', REPORT_ID, packet);
       await device.sendReport(REPORT_ID, packet);
-      await delay(15);
+      await operationDelay(device, 15);
     }
   }
 

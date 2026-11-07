@@ -1,6 +1,6 @@
 {
   "name": "@shio265/moondrop-hid",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Browser WebHID SDK for Moondrop DAC and DSP EQ configuration",
   "type": "module",
   "main": "./dist/index.js",

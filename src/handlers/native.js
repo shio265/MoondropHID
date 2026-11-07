@@ -2,6 +2,7 @@
 // Native PEQ: Marigold, Rays, MOONRIVER 3, FreeDSP Pro/Mini, DAWN PRO2.
 import { requestReport } from '../hid/transport.js';
 import { debugLog, logHidTx, logHidRx } from '../utils/logger.js';
+import { markWrite, operationFor, reportProgress } from '../hid/operations.js';
 
 export const nativeProtocol = (function () {
   // Retain diagnostic calls, but make verbose output opt-in for SDK users.
@@ -99,6 +100,7 @@ export const nativeProtocol = (function () {
     for (let i = 0; i < deviceDetails.modelConfig.maxFilters; i++) {
       const filter = await readFullFilter(device, i);
       filters.push(filter);
+      reportProgress(deviceDetails, 'read', i + 1, deviceDetails.modelConfig.maxFilters);
     }
 
     let globalGain = 0;
@@ -106,6 +108,7 @@ export const nativeProtocol = (function () {
     try {
       globalGain = await readPregain(device);
     } catch (e) {
+      operationFor(device)?.throwIfAborted();
       globalGainError = e;
       console.warn("USB Device PEQ: Moondrop failed to read pregain, defaulting to 0:", e);
     }
@@ -261,6 +264,7 @@ export const nativeProtocol = (function () {
 
   async function pushToDevice(deviceDetails, phoneObj, slot, globalGain, filters) {
     const device = deviceDetails.rawDevice;
+    markWrite(deviceDetails);
 
     for (let i = 0; i < filters.length && i < deviceDetails.modelConfig.maxFilters; i++) {
       const writeFilter = buildWritePacket(i, filters[i], deviceDetails.modelConfig);
@@ -272,8 +276,10 @@ export const nativeProtocol = (function () {
       console.log(`USB Device PEQ: Moondrop sending enable command for filter ${i}:`, enable);
       logHidTx('Moondrop', REPORT_ID, enable);
       await device.sendReport(REPORT_ID, enable);
+      reportProgress(deviceDetails, 'write', i + 1, deviceDetails.modelConfig.maxFilters);
     }
 
+    reportProgress(deviceDetails, 'commit', 0, 1);
     // Do not double-apply pregain on devices that calculate headroom themselves.
     if (deviceDetails.modelConfig.deviceHandlesPregain === false) {
       await writePregain(device, globalGain);
@@ -284,6 +290,7 @@ export const nativeProtocol = (function () {
     console.log(`USB Device PEQ: Moondrop sending save command:`, save);
     logHidTx('Moondrop', REPORT_ID, save);
     await device.sendReport(REPORT_ID, save);
+    reportProgress(deviceDetails, 'commit', 1, 1);
 
     console.log(`USB Device PEQ: Moondrop successfully pushed ${filters.length} filters to device`);
     return false;

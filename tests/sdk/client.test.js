@@ -212,7 +212,7 @@ test('disconnect observers are isolated and subscriptions can be removed', async
   const client = createClient({ hid });
   const events = [];
   client.subscribe(() => { throw new Error('Observer failure'); });
-  const unsubscribe = client.subscribe(event => events.push(event));
+  const unsubscribe = client.subscribe(event => { if (event.type !== 'progress') events.push(event); });
   await client.connect();
   hid.unplug();
   assert.equal(client.connected, false);

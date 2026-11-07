@@ -4,9 +4,9 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import * as sdk from '../../src/index.js';
 
-test('the public entry keeps the same five SDK exports', () => {
+test('the public entry exposes the SDK and descriptor-only inspection', () => {
   assert.deepEqual(Object.keys(sdk).sort(), [
-    'HidError', 'createClient', 'getSupportedDevices', 'isSupported', 'setDebugLogger'
+    'HidError', 'createClient', 'getSupportedDevices', 'inspectDevice', 'isSupported', 'setDebugLogger'
   ]);
 });
 

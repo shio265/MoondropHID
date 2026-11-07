@@ -7,7 +7,7 @@ import { buildExtras } from '../devices/settings.js';
 import { prepareFilters } from '../devices/filters.js';
 
 export function createConnector({ hid, throwErrors = false, allowExperimental = true,
-  logger = globalThis.console } = {}) {
+  logger = globalThis.console, onSelected } = {}) {
     let currentDevice = null;
     const console = logger;
     const getHid = () => hid ?? globalThis.navigator?.hid;
@@ -51,6 +51,8 @@ export function createConnector({ hid, throwErrors = false, allowExperimental = 
                     rawDevice = sibling;
                   }
                 }
+                // Descriptor-only diagnostics may also describe unsupported devices.
+                onSelected?.(rawDevice);
                 // Find the vendor configuration matching the selected device
               const vendorConfig = usbHidDeviceHandlerConfig.find(entry =>
                 entry.vendorIds.includes(rawDevice.vendorId)
@@ -142,9 +144,11 @@ export function createConnector({ hid, throwErrors = false, allowExperimental = 
             }
         }
     };
-    const checkDeviceConnected = async (device) => {
+    const checkDeviceConnected = async (device, operation) => {
+        operation?.throwIfAborted();
         var rawDevice = device.rawDevice;
         const rawDevices = await getHid().getDevices();
+        operation?.throwIfAborted();
         // When multiple interfaces share vendorId+productId,
         // prefer the one whose collections match the currently-held device so we
         // don't accidentally swap back to the consumer-control interface.
@@ -165,20 +169,21 @@ export function createConnector({ hid, throwErrors = false, allowExperimental = 
         }
         // But lets check if we are still open otherwise we need to open the device again
         if (!matchingRawDevice.opened) {
-          await matchingRawDevice.open();
+          if (operation) await operation.native(() => matchingRawDevice.open());
+          else await matchingRawDevice.open();
           device.rawDevice = matchingRawDevice; // Swap the device over
         }
         return true;
     };
 
-    const pushToDevice = async (device, phoneObj, slot, preamp, filters) => {
-        if (!await checkDeviceConnected(device)) {
+    const pushToDevice = async (device, phoneObj, slot, preamp, filters, operation) => {
+        if (!await checkDeviceConnected(device, operation)) {
             throw Object.assign(new Error('Device disconnected.'), { code: 'DEVICE_DISCONNECTED' });
         }
         if (device && device.handler) {
 
           const filtersToWrite = prepareFilters(filters, device.modelConfig, preamp, { logger: console });
-          return await device.handler.pushToDevice(device, phoneObj, slot, preamp, filtersToWrite);
+          return await device.handler.pushToDevice(operation?.wrapDevice(device) ?? device, phoneObj, slot, preamp, filtersToWrite);
       } else {
           console.error("No device handler available for pushing.");
       }
@@ -190,30 +195,32 @@ export function createConnector({ hid, throwErrors = false, allowExperimental = 
         return device.modelConfig.availableSlots;
     };
 
-    const getCurrentSlot = async (device) => {
+    const getCurrentSlot = async (device, operation) => {
+        operation?.throwIfAborted();
         if (device && device.handler) {
-            return await device.handler.getCurrentSlot(device)
+            return await device.handler.getCurrentSlot(operation?.wrapDevice(device) ?? device)
         }{
             console.error("No device handler available for querying");
             return -2;
         }
     };
 
-    const pullFromDevice = async (device, slot) => {
-        if (!await checkDeviceConnected(device)) {
+    const pullFromDevice = async (device, slot, operation) => {
+        if (!await checkDeviceConnected(device, operation)) {
             throw Object.assign(new Error('Device disconnected.'), { code: 'DEVICE_DISCONNECTED' });
         }
         if (device && device.handler) {
-            return await device.handler.pullFromDevice(device, slot);
+            return await device.handler.pullFromDevice(operation?.wrapDevice(device) ?? device, slot);
         } else {
             console.error("No device handler available for pulling.");
             return { filters: [] }; // Empty filters
         }
     };
 
-    const enablePEQ = async (device, enabled, slotId) => {
+    const enablePEQ = async (device, enabled, slotId, operation) => {
+        operation?.throwIfAborted();
         if (device && device.handler) {
-            return await device.handler.enablePEQ(device, enabled, slotId);
+            return await device.handler.enablePEQ(operation?.wrapDevice(device) ?? device, enabled, slotId);
         } else {
             console.error("No device handler available for enabling.");
         }
