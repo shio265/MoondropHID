@@ -4,6 +4,7 @@ import { usbHidDeviceHandlerConfig } from '../config/registry.js';
 import { resolveConstraints, loadPeqConstraintsConfig } from '../config/constraints.js';
 import { handlerNameFor } from '../handlers/index.js';
 import { buildExtras } from '../devices/settings.js';
+import { prepareFilters } from '../devices/filters.js';
 
 export function createConnector({ hid, throwErrors = false, allowExperimental = true,
   logger = globalThis.console } = {}) {
@@ -176,84 +177,7 @@ export function createConnector({ hid, throwErrors = false, allowExperimental = 
         }
         if (device && device.handler) {
 
-          // Create a copy of the filters array to avoid modifying the original
-          let filtersToWrite = [...filters];
-
-          // Ensure array is at most the maxFilters
-          if (filtersToWrite.length > device.modelConfig.maxFilters) {
-            console.warn(`USB Device PEQ: Truncating ${filtersToWrite.length} filters to ${device.modelConfig.maxFilters} (device limit)`);
-
-            const enabledFilters = filtersToWrite.filter(f => !f.disabled);
-            filtersToWrite = enabledFilters.length >= device.modelConfig.maxFilters
-              ? enabledFilters.slice(0, device.modelConfig.maxFilters)
-              : [
-                  ...enabledFilters,
-                  ...filtersToWrite.filter(f => f.disabled).slice(0, device.modelConfig.maxFilters - enabledFilters.length)
-                ];
-          }
-
-          // And do an upfront sanity check on the values
-          for (let i = 0 ; i < filtersToWrite.length; i++) {
-            // A quick sanity check on the filters
-            if (filtersToWrite[i].freq < 20 || filtersToWrite[i].freq > 20000) {
-              filtersToWrite[i].freq = 100;
-            }
-            if (filtersToWrite[i].q < 0.01 || filtersToWrite[i].q > 100) {
-              filtersToWrite[i].q = 1;
-            }
-          }
-
-          // Determine per-type support from granular flags
-          const supportsLS = device.modelConfig.supportsLSFilter === true;
-          const supportsHS = device.modelConfig.supportsHSFilter === true;
-          const supportsLPHP = device.modelConfig.supportsLPHPFilters === true;
-
-          const hasUnsupportedLS = filtersToWrite.some(f => f.type === "LSQ" && f.gain !== 0) && !supportsLS;
-          const hasUnsupportedHS = filtersToWrite.some(f => f.type === "HSQ" && f.gain !== 0) && !supportsHS;
-          const hasUnsupportedLPHP = filtersToWrite.some(f => (f.type === "LP" || f.type === "HP")) && !supportsLPHP;
-
-          // Second, determine if we need pregain (only if globalGain is positive)
-          const needsPreGain = preamp < 0;
-
-          // Convert unsupported filter types to PK with gain=0
-          for (let i = 0; i < filtersToWrite.length; i++) {
-            const f = filtersToWrite[i];
-            if ((f.type === "LSQ" && !supportsLS) ||
-                (f.type === "HSQ" && !supportsHS) ||
-                ((f.type === "LP" || f.type === "HP") && !supportsLPHP)) {
-              console.log(`USB Device PEQ: converting unsupported ${f.type} filter to PK with gain=0`);
-              filtersToWrite[i] = {...f, type: "PK", gain: 0};
-            }
-          }
-
-          // Warn about unsupported filter types
-          const hasUnsupportedShelfFilters = hasUnsupportedLS || hasUnsupportedHS;
-          if (hasUnsupportedShelfFilters && needsPreGain && device.modelConfig.deviceHandlesPregain === true) {
-            console.warn("Device handles pregain internally — host-computed pregain and unsupported shelf filters will be ignored");
-          } else if (hasUnsupportedLS && hasUnsupportedHS) {
-            console.warn("Device does not support LS or HS filters - ignoring");
-          } else if (hasUnsupportedLS) {
-            console.warn("Device does not support Low Shelf filters - ignoring");
-          } else if (hasUnsupportedHS) {
-            console.warn("Device does not support High Shelf filters - ignoring");
-          } else if (needsPreGain && device.modelConfig.deviceHandlesPregain === true) {
-            console.warn("Device handles pregain internally — host-computed pregain will not be written");
-          }
-          if (hasUnsupportedLPHP) {
-            console.warn("Device does not support LP/HP filters - ignoring");
-          }
-
-          // If we have fewer filters than maxFilters, fill the rest with defaultResetFiltersValues
-          if (filtersToWrite.length < device.modelConfig.maxFilters && device.modelConfig.defaultResetFiltersValues) {
-            const defaultFilter = device.modelConfig.defaultResetFiltersValues[0];
-            console.log(`USB Device PEQ: filling missing filters with defaults:`, defaultFilter);
-
-            for (let i = filtersToWrite.length; i < device.modelConfig.maxFilters; i++) {
-
-              filtersToWrite.push({...defaultFilter});
-            }
-          }
-
+          const filtersToWrite = prepareFilters(filters, device.modelConfig, preamp, { logger: console });
           return await device.handler.pushToDevice(device, phoneObj, slot, preamp, filtersToWrite);
       } else {
           console.error("No device handler available for pushing.");

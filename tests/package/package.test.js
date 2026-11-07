@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { configure } from '../scripts/configure.js';
-import { checkPublish } from '../scripts/publish-check.js';
+import { configure } from '../../scripts/configure.js';
+import { checkPublish } from '../../scripts/publish-check.js';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
 function bun(args, cwd = root, env = {}) {
   const result = Bun.spawnSync([process.execPath, ...args], {
@@ -32,7 +32,18 @@ test('publish checks reject npmjs.org, placeholder scopes, wrong owners and wron
     GITHUB_REPOSITORY: 'test-owner/Dac', npm_config_registry: 'https://npm.pkg.github.com/' }));
 });
 
-test('publish dry-run resolves scoped GitHub authentication without uploading', async () => {
+test('release tags accept an optional v prefix but still require the exact version', () => {
+  const configured = { ...manifest, version: '0.1.0' };
+  for (const tag of ['0.1.0', 'v0.1.0']) {
+    assert.doesNotThrow(() => checkPublish(configured, { RELEASE_TAG: tag }));
+  }
+  for (const tag of ['0.1.1', 'v0.1.1', 'vv0.1.0', 'release-0.1.0', '0.1.0-beta.1', '0.1.0 ']) {
+    assert.throws(() => checkPublish(configured, { RELEASE_TAG: tag }),
+      /Release tag .* must match package\.json version "0\.1\.0"/);
+  }
+});
+
+test('publish dry-run resolves scoped GitHub authentication and both release tag formats without uploading', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'opencode-moondrop-publish-'));
   const env = { NPM_CONFIG_TOKEN: 'dry-run-placeholder-not-a-real-token' };
   try {
@@ -40,12 +51,15 @@ test('publish dry-run resolves scoped GitHub authentication without uploading', 
       scripts: { prepublishOnly: manifest.scripts.prepublishOnly } }));
     await mkdir(join(temp, 'scripts'));
     await writeFile(join(temp, 'scripts/publish-check.js'),
-      await readFile(new URL('../scripts/publish-check.js', import.meta.url), 'utf8'));
+      await readFile(new URL('../../scripts/publish-check.js', import.meta.url), 'utf8'));
     await writeFile(join(temp, '.npmrc'),
       `@${manifest.name.split('/')[0].slice(1)}:registry=https://npm.pkg.github.com\n` +
       '//npm.pkg.github.com/:_authToken=${NPM_CONFIG_TOKEN}\n');
-    const output = bun(['publish', '--dry-run', '--registry=https://npm.pkg.github.com'], temp, env);
-    assert.match(output, /Registry: https:\/\/npm\.pkg\.github\.com\/?/);
+    for (const tag of [manifest.version, `v${manifest.version}`]) {
+      const output = bun(['publish', '--dry-run', '--registry=https://npm.pkg.github.com'], temp,
+        { ...env, RELEASE_TAG: tag });
+      assert.match(output, /Registry: https:\/\/npm\.pkg\.github\.com\/?/);
+    }
     const rejected = Bun.spawnSync([process.execPath, 'publish', '--dry-run'], {
       cwd: temp,
       env: { ...process.env, ...env, npm_config_registry: 'https://registry.npmjs.org/' }
@@ -60,7 +74,7 @@ test('GitHub configuration lowercases scope, links repository, updates lock and 
   try {
     const url = pathToFileURL(temp + sep);
     await writeFile(join(temp, 'package.json'), JSON.stringify(manifest));
-    const originalLockText = await readFile(new URL('../bun.lock', import.meta.url), 'utf8');
+    const originalLockText = await readFile(new URL('../../bun.lock', import.meta.url), 'utf8');
     const originalLock = Bun.JSONC.parse(originalLockText);
     await writeFile(join(temp, 'bun.lock'), originalLockText);
     const previousScope = manifest.name.split('/')[0];
@@ -98,7 +112,8 @@ test('packed package installs locally, exposes ESM/types, and excludes developme
     }
     assert.ok(files.includes('dist/index.js'));
     assert.ok(files.includes('dist/index.d.ts'));
-    assert.ok(!files.some(path => path.startsWith('dist/internal/')), 'Bunup should bundle the internal modules');
+    assert.deepEqual(files.filter(path => path.startsWith('dist/')).sort(), ['dist/index.d.ts', 'dist/index.js'],
+      'Bunup should bundle all implementation modules into the public entry');
     assert.ok(packed.size < 256 * 1024 * 1024);
     await writeFile(join(temp, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
     bun(['add', '--ignore-scripts', '--no-save', tarball], temp);
@@ -106,7 +121,7 @@ test('packed package installs locally, exposes ESM/types, and excludes developme
       if(sdk.getSupportedDevices().length!==21) throw Error('Missing registry');
       if(typeof sdk.createClient!=='function') throw Error('Missing SDK');
       if(sdk.isSupported()) throw Error('Unexpected WebHID in Bun');
-      const {fakeDevice}=await import(${JSON.stringify(new URL('./smoke.js', import.meta.url).href)});
+      const {fakeDevice}=await import(${JSON.stringify(new URL('../helpers/device.js', import.meta.url).href)});
       const raw=fakeDevice('MOONRIVER 3');
       const client=sdk.createClient({hid:{async requestDevice(){return [raw]},async getDevices(){return [raw]}}});
       await client.connect();
@@ -114,8 +129,10 @@ test('packed package installs locally, exposes ESM/types, and excludes developme
       await client.writeConfig({filters:[{type:'PK',freq:1000,gain:-3,q:1}]});
       await client.disconnect();
       if(raw.reports.length!==27||raw.opened) throw Error('Bundled write/disconnect failed');
-      try {await import(${JSON.stringify(manifest.name + '/internal/protocols.js')}); throw Error('Unexpected private export');}
-      catch(e){if(!['ERR_PACKAGE_PATH_NOT_EXPORTED','ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND'].includes(e.code)) throw e;}`;
+      for (const path of ['/handlers/native.js','/client/client.js','/hid/connection.js','/utils/errors.js']) {
+        try {await import(${JSON.stringify(manifest.name)}+path); throw Error('Unexpected private export');}
+        catch(e){if(!['ERR_PACKAGE_PATH_NOT_EXPORTED','ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND'].includes(e.code)) throw e;}
+      }`;
     bun(['-e', script], temp);
     await writeFile(join(temp, 'consumer.ts'), `import {createClient, type EqConfigInput} from ${JSON.stringify(manifest.name)};
       const client=createClient();
@@ -123,7 +140,7 @@ test('packed package installs locally, exposes ESM/types, and excludes developme
       void client.writeConfig(config);
       // @ts-expect-error gainMode is boolean, not a string.
       void client.writeSetting('gainMode','high');`);
-    const tsc = fileURLToPath(new URL('../node_modules/typescript/bin/tsc', import.meta.url));
+    const tsc = fileURLToPath(new URL('../../node_modules/typescript/bin/tsc', import.meta.url));
     bun([tsc, '--module', 'NodeNext', '--target', 'ES2022',
       '--strict', '--noEmit', '--lib', 'ES2022,DOM', 'consumer.ts'], temp);
   } finally { await rm(temp, { recursive: true, force: true }); }

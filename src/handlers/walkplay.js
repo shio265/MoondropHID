@@ -251,7 +251,7 @@ export const walkplayProtocol = (function () {
       const timeout = setTimeout(() => {
         device.removeEventListener('inputreport', onReport);
         reject('Timeout reading denoise state');
-      }, 1000);
+      }, 2000);
       const onReport = (event) => {
         const data = new Uint8Array(event.data.buffer);
         logHidRx('Walkplay', data);
@@ -305,7 +305,7 @@ export const walkplayProtocol = (function () {
         if (data[0] !== READ || data[1] !== CMD.DAC_WORK_MODE) return;
         clearTimeout(timeout);
         device.removeEventListener('inputreport', onReport);
-        resolve(data[3] === 0x01);
+        resolve(data[3]);
       };
       device.addEventListener('inputreport', onReport);
       sendReport(device, REPORT_ID, [READ, CMD.DAC_WORK_MODE]).catch(reject);

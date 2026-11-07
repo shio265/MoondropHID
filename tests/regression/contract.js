@@ -1,5 +1,5 @@
 // Byte-level regression tests. The fixture hash was captured before consolidation.
-import { fakeDevice } from './smoke.js';
+import { fakeDevice } from '../helpers/device.js';
 
 const EXPECTED_HASH = '68b890b31778c3918f183cebabc8b42fd98a47b42eff9e201eb3e7d5d48c1f9e';
 
@@ -18,9 +18,9 @@ export async function hashContract(contract) {
 }
 
 export async function captureContract({
-  connectorPath = '../src/internal/connection.js?contract-tests',
-  registryPath = '../src/internal/config.js',
-  constraintsPath = registryPath,
+  connectorPath = '../../src/hid/connection.js?contract-tests',
+  registryPath = '../../src/config/registry.js',
+  constraintsPath = '../../src/config/constraints.js',
   constraintsDataPath
 } = {}) {
   const registry = await import(new URL(registryPath, import.meta.url));

@@ -1,33 +1,14 @@
 import { test, spyOn } from 'bun:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createClient, getSupportedDevices, isSupported, HidError, setDebugLogger } from '../src/index.js';
-import { fakeDevice } from './smoke.js';
-import { nativeProtocol, registerProtocol } from '../src/internal/protocols.js';
+import { createClient, getSupportedDevices, isSupported, HidError, setDebugLogger } from '../../src/index.js';
+import { fakeDevice } from '../helpers/device.js';
+import { transport } from '../helpers/transport.js';
+import { nativeProtocol, registerProtocol } from '../../src/handlers/index.js';
 
 const filter = { type: 'PK', freq: 1000, gain: -3, q: 1 };
 const config = () => ({ filters: [{ ...filter }], globalGain: 0 });
 const hasCode = code => error => error instanceof HidError && error.code === code;
-
-function transport(model = 'MOONRIVER 3', { vendorId = 0x35D8, protocol = 'moondrop' } = {}) {
-  const raw = fakeDevice(model, vendorId, protocol);
-  const events = new EventTarget();
-  const hid = {
-    raw, requests: 0, selected: [raw], devices: [raw],
-    async requestDevice() { this.requests++; return this.selected; },
-    async getDevices() { return this.devices; },
-    addEventListener: events.addEventListener.bind(events),
-    removeEventListener: events.removeEventListener.bind(events),
-    unplug() {
-      raw.opened = false;
-      this.devices = [];
-      const event = new Event('disconnect');
-      Object.defineProperty(event, 'device', { value: raw });
-      events.dispatchEvent(event);
-    }
-  };
-  return hid;
-}
 
 test('imports without browser globals; unsupported calls fail explicitly', () => {
   const script = `delete globalThis.navigator; delete globalThis.window;
@@ -36,7 +17,7 @@ test('imports without browser globals; unsupported calls fail explicitly', () =>
     try {await createClient().connect(); throw Error('Expected error');}
     catch(e) {if(e.code!=='UNSUPPORTED_ENVIRONMENT') throw e;}`;
   const result = Bun.spawnSync([process.execPath, '-e', script], {
-    cwd: fileURLToPath(new URL('../', import.meta.url))
+    cwd: fileURLToPath(new URL('../../', import.meta.url))
   });
   assert.equal(result.exitCode, 0, result.stderr.toString());
 });
@@ -308,6 +289,7 @@ test('DAC settings expose real readable/writable capabilities and validate value
   const info = await client.connect();
   assert.equal(info.capabilities.settings.dacFilter.readable, true);
   assert.equal(await client.readSetting('dacFilter'), 'SLOW-LL');
+  assert.equal(await client.readSetting('dacWorkMode'), 0);
   await client.writeSetting('dacFilter', 'SLOW-PC');
   assert.deepEqual(hid.raw.reports.at(-1).bytes, [1, 0x11, 1, 4]);
   await client.writeSetting('dacBalance', { left: 0, right: 5 });
