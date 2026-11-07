@@ -1,66 +1,15 @@
-//
-// Moondrop HID by shio265.
-//
-// Moondrop-only USB HID connections.
 // Unknown product names are rejected even when they share a supported chipset VID.
 
-import { usbHidDeviceHandlerConfig, handlerNameFor,
-  resolveConstraints, resolveExtras, loadPeqConstraintsConfig } from './config.js';
+import { usbHidDeviceHandlerConfig } from '../config/registry.js';
+import { resolveConstraints, loadPeqConstraintsConfig } from '../config/constraints.js';
+import { handlerNameFor } from '../handlers/index.js';
+import { buildExtras } from '../devices/settings.js';
 
 export function createConnector({ hid, throwErrors = false, allowExperimental = true,
   logger = globalThis.console } = {}) {
     let currentDevice = null;
     const console = logger;
     const getHid = () => hid ?? globalThis.navigator?.hid;
-
-    // Capability wrappers live with the connection that exposes them.
-    function notImplemented(name) {
-      return () => Promise.reject(
-        Object.assign(new Error(`NOT_IMPLEMENTED: ${name}`), { code: 'NOT_IMPLEMENTED' })
-      );
-    }
-
-    function capable(cfg, handler, device, capKey, getMethod, setMethod) {
-      const capCfg = cfg?.[capKey] ?? {};
-      const devCfg = device?.modelConfig?.[capKey] ?? {};
-      const isSupported = (devCfg.supported !== undefined ? devCfg.supported : capCfg.supported) === true;
-      const result = { supported: isSupported, ...capCfg, ...devCfg };
-      delete result.handler;
-      delete result.readHandler;
-      delete result.note;
-      if (getMethod) {
-        result.get = isSupported && typeof handler?.[getMethod] === 'function'
-          ? () => handler[getMethod](device)
-          : notImplemented(`${capKey}.get`);
-      }
-      if (setMethod) {
-        result.set = isSupported && typeof handler?.[setMethod] === 'function'
-          ? (...args) => handler[setMethod](device, ...args)
-          : notImplemented(`${capKey}.set`);
-      }
-      return result;
-    }
-
-    function buildExtras(handler, device) {
-      const cfg = resolveExtras(device?.modelConfig) ?? {};
-      const h = handler ?? {};
-      return {
-        micGain: capable(cfg, h, device, 'micGain', 'readMicGain', 'setMicGain'),
-        denoise: capable(cfg, h, device, 'denoise', 'readDenoiseEnabled', 'setDenoiseEnabled'),
-        dacFilter: capable(cfg, h, device, 'dacFilter', 'readDacFilter', 'setDacFilter'),
-        dacBalance: capable(cfg, h, device, 'dacBalance', null, 'setDacBalance'),
-        dacWorkMode: capable(cfg, h, device, 'dacWorkMode', 'readDacWorkMode', 'setDacWorkMode'),
-        gainMode: capable(cfg, h, device, 'gainMode', 'readGainMode', 'setGainMode'),
-        battery: capable(cfg, h, device, 'battery', 'readBattery', null),
-        eqEnabled: capable(cfg, h, device, 'eqEnabled', 'readEqEnabled', 'setEqEnabled'),
-        outputGain: {
-          supported: typeof h.setOutputGain === 'function',
-          set: typeof h.setOutputGain === 'function'
-            ? (gainDb) => h.setOutputGain(device, gainDb)
-            : notImplemented('outputGain.set'),
-        },
-      };
-    }
 
     const getDeviceConnected = async () => {
         try {

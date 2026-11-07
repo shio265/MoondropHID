@@ -13,7 +13,9 @@ export function checkPublish(manifest, env = process.env) {
   if (env.GITHUB_REPOSITORY && `${repo[1]}/${repo[2]}`.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The package must be linked to the repository running this workflow.');
   }
-  if (env.RELEASE_TAG && env.RELEASE_TAG !== `v${manifest.version}`) throw new Error('Release tag must match package.json version.');
+  if (env.RELEASE_TAG && ![manifest.version, `v${manifest.version}`].includes(env.RELEASE_TAG)) {
+    throw new Error(`Release tag "${env.RELEASE_TAG}" must match package.json version "${manifest.version}" (with or without "v").`);
+  }
 }
 
 if (import.meta.main) {

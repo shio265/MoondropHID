@@ -1,4 +1,3 @@
-// Moondrop HID by shio265.
 // Consolidated USB protocols. Each implementation keeps its own packet format,
 // numeric encoding, response matching and commit sequence.
 import {

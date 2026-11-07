@@ -11,5 +11,5 @@ export default defineConfig({
   // The SDK already has explicit public types; do not replace them with JS inference.
   dts: false,
   plugins: [copy('src/index.d.ts').to('index.d.ts')],
-  banner: '// Moondrop HID by shio265.'
+  banner: '// Moondrop HID SDK.'
 });

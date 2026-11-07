@@ -1,9 +1,13 @@
 # Moondrop HID
 
+[![jsDelivr](https://data.jsdelivr.com/v1/package/gh/shio265/MoondropHID/badge)](https://www.jsdelivr.com/package/gh/shio265/MoondropHID)
+
 A JavaScript/TypeScript library for connecting to, reading, and writing Moondrop DAC configurations via WebHID.
 Runs in browsers that support WebHID.
 
-## Installation
+## Setup
+
+### GitHub Packages
 
 Add the following to your application's `.npmrc`:
 
@@ -19,9 +23,24 @@ Set a GitHub **classic** PAT with the `read:packages` permission in the
 bun add @shio265/moondrop-hid
 ```
 
-## Usage example
+Import it in your application:
 
-HTML:
+```js
+import { createClient } from '@shio265/moondrop-hid';
+```
+
+### jsDelivr
+
+```js
+import { createClient } from 'https://cdn.jsdelivr.net/gh/shio265/MoondropHID@0.1.0/src/index.js';
+```
+
+Replace it with another release version if needed.
+[Browse the CDN files](https://www.jsdelivr.com/package/gh/shio265/MoondropHID).
+
+## Usage
+
+Both methods use the same client API. Add these buttons to your page:
 
 ```html
 <button id="connect">Connect and read configuration</button>
@@ -29,11 +48,10 @@ HTML:
 <button id="disconnect">Disconnect</button>
 ```
 
-JavaScript, run after the buttons have been added to the page:
+Add the following JavaScript after your chosen import. For jsDelivr, put the
+import and this code in a `<script type="module">` after the buttons.
 
 ```js
-import { createClient } from '@shio265/moondrop-hid';
-
 const dac = createClient();
 
 document.querySelector('#connect').onclick = async () => {
